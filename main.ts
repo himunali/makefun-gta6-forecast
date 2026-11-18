@@ -249,6 +249,36 @@ function fittedQuantiles(p1: number, fit: HourForecast): number[] {
   });
 }
 
+/**
+ * The competition's own output constraints (RULES.txt): every quantile
+ * must be a finite number above 0 and at most 1e9, and non-decreasing
+ * within its hour. This never fires on the current model — fitted
+ * quantiles are clamped into [1, 1e9] and increase with z, and the
+ * baseline quantiles increase too — it is a guard so a future change to
+ * the model can never silently ship an invalid case: an invalid case is
+ * scored as if every quantile were the hour-1 print and ranks below
+ * every entry whose cases are all valid. It throws naming the case,
+ * hour and level, so a bad output fails loudly here instead of in the
+ * grader. It runs after the per-case fallback, so it checks the bytes
+ * actually written, whatever path produced them.
+ */
+function validateHours(hours: Array<{ hour: number; q: number[] }>, id: string): void {
+  for (const { hour, q } of hours) {
+    if (q.length !== LEVELS.length) {
+      throw new Error(`${id} hour ${hour}: expected ${LEVELS.length} quantiles, got ${q.length}`);
+    }
+    for (let j = 0; j < q.length; j++) {
+      const v = q[j] as number;
+      if (!Number.isFinite(v) || v <= 0 || v > 1e9) {
+        throw new Error(`${id} hour ${hour}: quantile at level ${LEVELS[j]} is ${v}, must be finite, > 0 and <= 1e9`);
+      }
+      if (j > 0 && v < (q[j - 1] as number)) {
+        throw new Error(`${id} hour ${hour}: quantile at level ${LEVELS[j]} (${v}) is below the level ${LEVELS[j - 1]} quantile (${q[j - 1]})`);
+      }
+    }
+  }
+}
+
 /** A case's hour-1 print, falling back to its last hourly point, then 1. */
 function hourOne(c: CaseFile): number {
   const first = (c.known ?? []).find((k) => k.hour === 1);
@@ -285,5 +315,6 @@ for (const file of inputs) {
     const p1 = 1;
     hours = Array.from({ length: 23 }, (_, i) => ({ hour: i + 2, q: baselineQuantiles(p1, i + 2) }));
   }
+  validateHours(hours, id);
   writeFileSync(join(OUTPUT_DIR, `${id}.out`), `${JSON.stringify({ hours })}\n`);
 }
